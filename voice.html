@@ -60,9 +60,11 @@ var LANG  = Q.get('lang') || 'en-US';
 var FIELDS = [];
 try { FIELDS = JSON.parse(Q.get('fields') || '[]'); } catch(e){ FIELDS = []; }
 
+var IS_INT = (MODE === 'interview');
 var answers = {};           // id -> value
 var idx = 0;                // current question index
 var card = document.getElementById('card');
+try{ document.querySelector('.brand .sub').textContent = IS_INT ? 'AI Interview' : 'Voice Assistant'; }catch(e){}
 var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 var rec = null, recActive = false;
 
@@ -144,10 +146,11 @@ function intro(){
     return;
   }
   card.innerHTML =
-    '<div class="qno">Interview form &middot; '+FIELDS.length+' questions</div>'+
-    '<h1>Fill the interview form by voice</h1>'+
-    '<p class="sub">I will read each field aloud, one by one. Speak your answer after the beep-style prompt. '+
-    'You can edit any answer on screen, re-record it, skip it, or go back. At the end you review everything and send it to the app.</p>'+
+    '<div class="qno">'+(IS_INT?'AI Interview':'Interview form')+' &middot; '+FIELDS.length+' questions</div>'+
+    '<h1>'+(IS_INT?'Your AI voice interview':'Fill the interview form by voice')+'</h1>'+
+    '<p class="sub">'+(IS_INT
+       ? 'I will ask you '+FIELDS.length+' questions, one at a time. Each question is read aloud — answer out loud after it. You can re-record or edit any answer, then review and submit. Take your time and speak clearly.'
+       : 'I will read each field aloud, one by one. Speak your answer after the prompt. You can edit any answer on screen, re-record it, skip it, or go back. At the end you review everything and send it to the app.')+'</p>'+
     '<div class="row"><button class="btn primary big" id="start">▶ Start</button></div>'+
     '<div class="hint">Tip: allow the microphone when your browser asks. Works best in a quiet room.</div>';
   document.getElementById('start').onclick=function(){ idx=0; question(); };
@@ -218,13 +221,13 @@ function review(){
   }).join('');
   card.innerHTML =
     '<div class="prog"><i style="width:100%"></i></div>'+
-    '<h1>Review &amp; send</h1>'+
-    '<p class="sub">Check the answers below. Go back to fix anything, then send them to the app.</p>'+
+    '<h1>'+(IS_INT?'Review &amp; submit':'Review &amp; send')+'</h1>'+
+    '<p class="sub">Check your answers below. Go back to fix anything, then '+(IS_INT?'submit your interview.':'send them to the app.')+'</p>'+
     rows+
     '<div class="status" id="st">&nbsp;</div>'+
     '<div class="row">'+
       '<button class="btn ghost" id="edit">◀ Edit answers</button>'+
-      '<button class="btn navy" id="send">✅ Send to app</button>'+
+      '<button class="btn navy" id="send">'+(IS_INT?'✅ Submit interview':'✅ Send to app')+'</button>'+
     '</div>';
   document.getElementById('edit').onclick=function(){ idx=0; question(); };
   document.getElementById('send').onclick=send;
@@ -238,9 +241,15 @@ function send(){
   fetch(EXEC, { method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'}, body:payload })
     .then(done).catch(done);
   function done(){
-    setStatus('ok','✓ Sent. Return to the workforce app — the form is filling in now. You can close this tab.');
-    speak('Done. Your answers have been sent to the app.');
-    if(btn){ btn.textContent='Sent ✓'; }
+    if(IS_INT){
+      setStatus('ok','✓ Thank you. Your interview has been submitted. You can close this tab.');
+      speak('Thank you. Your interview has been submitted.');
+      if(btn){ btn.textContent='Submitted ✓'; }
+    } else {
+      setStatus('ok','✓ Sent. Return to the workforce app — the form is filling in now. You can close this tab.');
+      speak('Done. Your answers have been sent to the app.');
+      if(btn){ btn.textContent='Sent ✓'; }
+    }
   }
 }
 
