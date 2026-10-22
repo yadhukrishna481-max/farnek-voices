@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FARNEK Voice Assistant</title>
+<style>
+  :root{--orange:#E87722;--navy:#073D72;--grey:#333333;--line:#e4e8ee}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Calibri,"Segoe UI",system-ui,Arial,sans-serif;background:#f4f6f9;color:#23272E}
+  .wrap{max-width:720px;margin:0 auto;padding:18px 16px 60px}
+  .brand{display:flex;align-items:center;gap:10px;margin:6px 0 14px}
+  .brand .fk{font-weight:800;font-size:22px;letter-spacing:1px;color:var(--orange)}
+  .brand .fk b{color:var(--grey)}
+  .card{background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 10px 30px rgba(16,24,40,.07);padding:22px}
+  h1{font-size:19px;margin:0 0 4px;color:var(--navy)}
+  .sub{color:#6b7484;font-size:13.5px}
+  .prog{height:8px;background:#eef2f7;border-radius:6px;overflow:hidden;margin:14px 0}
+  .prog > i{display:block;height:100%;background:var(--orange);width:0;transition:width .25s}
+  .qno{font-size:12px;font-weight:700;letter-spacing:.06em;color:var(--orange);text-transform:uppercase}
+  .qlabel{font-size:22px;font-weight:800;color:var(--navy);margin:6px 0 14px;line-height:1.25}
+  label.fl{font-weight:600;font-size:12px;color:#4a5568;display:block;margin-bottom:4px}
+  input,textarea,select{width:100%;padding:11px 12px;font-size:16px;border:1px solid #ccd3db;border-radius:10px;background:#fff;outline:none;font-family:inherit}
+  input:focus,textarea:focus,select:focus{border-color:var(--orange);box-shadow:0 0 0 3px rgba(232,119,34,.15)}
+  textarea{min-height:92px;resize:vertical}
+  .status{min-height:22px;margin:12px 0;font-size:14px;font-weight:600}
+  .status.listen{color:var(--orange)}
+  .status.speak{color:var(--navy)}
+  .status.ok{color:#0E7C68}
+  .status.err{color:#C0392B}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--orange);margin-right:7px;vertical-align:middle;animation:pulse 1s infinite}
+  @keyframes pulse{0%,100%{opacity:.35;transform:scale(.9)}50%{opacity:1;transform:scale(1.15)}}
+  .row{display:flex;gap:9px;flex-wrap:wrap;margin-top:16px}
+  .btn{flex:1;min-width:120px;padding:12px 14px;font-size:15px;font-weight:700;border:0;border-radius:11px;cursor:pointer}
+  .btn.primary{background:var(--orange);color:#fff}
+  .btn.navy{background:var(--navy);color:#fff}
+  .btn.ghost{background:#eef2f7;color:#33465c}
+  .btn:disabled{opacity:.5;cursor:default}
+  .rev{border-top:1px solid var(--line);padding:10px 0;display:flex;gap:10px}
+  .rev .k{flex:0 0 42%;font-weight:600;color:#4a5568;font-size:13.5px}
+  .rev .v{flex:1;color:#23272E;font-size:14px;word-break:break-word}
+  .rev .v.empty{color:#a0a8b4;font-style:italic}
+  .hint{font-size:12.5px;color:#8a93a0;margin-top:10px}
+  .big{font-size:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand"><span class="fk">FARN<b>E</b>K</span><span class="sub">Voice Assistant</span></div>
+  <div class="card" id="card"></div>
+</div>
+<script>
+"use strict";
+/* ---------------- read parameters ---------------- */
+var Q = new URLSearchParams(location.search);
+var MODE  = Q.get('mode') || 'form';
+var TOKEN = Q.get('token') || '';
+var EXEC  = Q.get('exec') || '';
+var LANG  = Q.get('lang') || 'en-US';
+var FIELDS = [];
+try { FIELDS = JSON.parse(Q.get('fields') || '[]'); } catch(e){ FIELDS = []; }
+
+var answers = {};           // id -> value
+var idx = 0;                // current question index
+var card = document.getElementById('card');
+var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+var rec = null, recActive = false;
+
+/* ---------------- helpers ---------------- */
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+function speak(text, cb){
+  try{
+    window.speechSynthesis.cancel();
+    var u = new SpeechSynthesisUtterance(text);
+    u.lang = LANG; u.rate = 1.0; u.pitch = 1.0;
+    u.onend = function(){ if(cb) cb(); };
+    u.onerror = function(){ if(cb) cb(); };
+    window.speechSynthesis.speak(u);
+  }catch(e){ if(cb) cb(); }
+}
+function cap(s){ s=String(s||'').trim(); return s? s.charAt(0).toUpperCase()+s.slice(1) : s; }
+function digitsOnly(s){ var m=String(s||'').replace(/[^0-9]/g,''); return m; }
+function toISODate(s){
+  var d = new Date(s);
+  if(!isNaN(d.getTime())){ var mm=('0'+(d.getMonth()+1)).slice(-2), dd=('0'+d.getDate()).slice(-2); return d.getFullYear()+'-'+mm+'-'+dd; }
+  return '';
+}
+function matchOption(val, options){
+  if(!options) return val;
+  var lv=String(val||'').toLowerCase().trim();
+  for(var i=0;i<options.length;i++){ if(String(options[i]).toLowerCase().trim()===lv) return options[i]; }
+  for(var j=0;j<options.length;j++){ var o=String(options[j]).toLowerCase().trim(); if(o && (o.indexOf(lv)>=0||lv.indexOf(o)>=0)) return options[j]; }
+  return val;
+}
+function normalize(fd, transcript){
+  var t=String(transcript||'').trim();
+  if(fd.type==='number'){ var n=digitsOnly(t); return n!==''? n : t; }
+  if(fd.type==='date'){ var iso=toISODate(t); return iso || ''; }
+  if(fd.type==='select'||fd.type==='radio'){ return matchOption(t, fd.options); }
+  return cap(t);
+}
+
+/* ---------------- recognition ---------------- */
+function stopRec(){ try{ if(rec) rec.stop(); }catch(e){} recActive=false; }
+function listen(onFinal, onErr){
+  if(!SR){ if(onErr) onErr('not-supported'); return; }
+  try{
+    rec = new SR(); rec.lang=LANG; rec.interimResults=true; rec.maxAlternatives=1; rec.continuous=false;
+    var finalText='';
+    rec.onresult=function(ev){
+      var interim='';
+      for(var i=ev.resultIndex;i<ev.results.length;i++){
+        if(ev.results[i].isFinal){ finalText += ev.results[i][0].transcript; }
+        else { interim += ev.results[i][0].transcript; }
+      }
+      var box=document.getElementById('ans');
+      if(box && interim && (box.tagName==='TEXTAREA'||box.type==='text')){ box.value = (finalText+' '+interim).trim(); }
+    };
+    rec.onerror=function(ev){ recActive=false; if(onErr) onErr(ev.error||'error'); };
+    rec.onend=function(){ recActive=false; if(onFinal) onFinal(finalText.trim()); };
+    recActive=true; rec.start();
+  }catch(e){ recActive=false; if(onErr) onErr(e.message||'error'); }
+}
+
+/* ---------------- control rendering ---------------- */
+function controlHTML(fd, val){
+  val = val==null ? '' : val;
+  if(fd.type==='textarea') return '<textarea id="ans">'+esc(val)+'</textarea>';
+  if(fd.type==='number')   return '<input id="ans" type="number" value="'+esc(val)+'">';
+  if(fd.type==='date')     return '<input id="ans" type="date" value="'+esc(val)+'">';
+  if(fd.type==='select'||fd.type==='radio'){
+    var opts='<option value="">—</option>'+(fd.options||[]).map(function(o){ return '<option'+(String(o)===String(val)?' selected':'')+'>'+esc(o)+'</option>'; }).join('');
+    return '<select id="ans">'+opts+'</select>';
+  }
+  return '<input id="ans" type="text" value="'+esc(val)+'">';
+}
+function saveCurrent(){ var box=document.getElementById('ans'); if(box) answers[FIELDS[idx].id]=box.value; }
+
+/* ---------------- screens ---------------- */
+function intro(){
+  stopRec();
+  if(!SR){
+    card.innerHTML='<h1>Voice not supported</h1><p class="sub">This page needs Chrome or Microsoft Edge for voice recognition. Please open this link in Chrome.</p>';
+    return;
+  }
+  card.innerHTML =
+    '<div class="qno">Interview form &middot; '+FIELDS.length+' questions</div>'+
+    '<h1>Fill the interview form by voice</h1>'+
+    '<p class="sub">I will read each field aloud, one by one. Speak your answer after the beep-style prompt. '+
+    'You can edit any answer on screen, re-record it, skip it, or go back. At the end you review everything and send it to the app.</p>'+
+    '<div class="row"><button class="btn primary big" id="start">▶ Start</button></div>'+
+    '<div class="hint">Tip: allow the microphone when your browser asks. Works best in a quiet room.</div>';
+  document.getElementById('start').onclick=function(){ idx=0; question(); };
+}
+
+function question(){
+  stopRec();
+  var fd=FIELDS[idx];
+  var pct=Math.round((idx/FIELDS.length)*100);
+  var isLast = idx===FIELDS.length-1;
+  card.innerHTML =
+    '<div class="prog"><i style="width:'+pct+'%"></i></div>'+
+    '<div class="qno">Question '+(idx+1)+' of '+FIELDS.length+'</div>'+
+    '<div class="qlabel">'+esc(fd.label)+'</div>'+
+    '<label class="fl">Your answer'+(fd.type==='select'||fd.type==='radio'?' (choose one)':'')+'</label>'+
+    controlHTML(fd, answers[fd.id])+
+    '<div class="status" id="st">&nbsp;</div>'+
+    '<div class="row">'+
+      '<button class="btn ghost" id="back"'+(idx===0?' disabled':'')+'>◀ Back</button>'+
+      '<button class="btn ghost" id="redo">🎤 Re-record</button>'+
+      '<button class="btn ghost" id="skip">Skip</button>'+
+      '<button class="btn primary" id="next">'+(isLast?'Review ▶':'Next ▶')+'</button>'+
+    '</div>'+
+    (fd.type==='select'||fd.type==='radio' ? '<div class="hint">Options: '+esc((fd.options||[]).join(', '))+'</div>' : '')+
+    '<div class="hint">You can also type or correct the answer above.</div>';
+
+  document.getElementById('back').onclick=function(){ saveCurrent(); if(idx>0){ idx--; question(); } };
+  document.getElementById('skip').onclick=function(){ saveCurrent(); advance(); };
+  document.getElementById('redo').onclick=function(){ startListen(fd); };
+  document.getElementById('next').onclick=function(){ saveCurrent(); advance(); };
+
+  // speak the prompt, then listen
+  var prompt = fd.label + '.';
+  if(fd.type==='select'||fd.type==='radio'){ prompt += ' Please choose one of: ' + (fd.options||[]).join(', ') + '.'; }
+  else if(fd.type==='number'){ prompt += ' Please say the number.'; }
+  else if(fd.type==='date'){ prompt += ' Please say the date.'; }
+  setStatus('speak','🔊 Reading the question…');
+  speak(prompt, function(){ startListen(fd); });
+}
+
+function startListen(fd){
+  setStatus('listen','<span class="dot"></span>Listening… speak now');
+  listen(function(finalText){
+    if(finalText){
+      var val=normalize(fd, finalText);
+      var box=document.getElementById('ans');
+      if(box){ if(fd.type==='select'||fd.type==='radio'){ box.value=val; } else { box.value=val; } }
+      setStatus('ok','Heard: “'+esc(finalText)+'”. Edit if needed, then Next.');
+    } else {
+      setStatus('err','Did not catch that. Tap 🎤 Re-record or type it in.');
+    }
+  }, function(err){
+    if(err==='not-allowed'){ setStatus('err','Microphone blocked. Allow the mic for this site, then tap 🎤 Re-record.'); }
+    else if(err==='no-speech'){ setStatus('err','No speech detected. Tap 🎤 Re-record or type it in.'); }
+    else { setStatus('err','Voice error ('+esc(err)+'). You can type the answer in.'); }
+  });
+}
+
+function setStatus(cls,html){ var s=document.getElementById('st'); if(s){ s.className='status '+cls; s.innerHTML=html; } }
+
+function advance(){ if(idx<FIELDS.length-1){ idx++; question(); } else { review(); } }
+
+function review(){
+  stopRec();
+  var rows = FIELDS.map(function(fd){
+    var v=answers[fd.id]; var empty=(v==null||v==='');
+    return '<div class="rev"><div class="k">'+esc(fd.label)+'</div><div class="v'+(empty?' empty':'')+'">'+(empty?'(blank)':esc(v))+'</div></div>';
+  }).join('');
+  card.innerHTML =
+    '<div class="prog"><i style="width:100%"></i></div>'+
+    '<h1>Review &amp; send</h1>'+
+    '<p class="sub">Check the answers below. Go back to fix anything, then send them to the app.</p>'+
+    rows+
+    '<div class="status" id="st">&nbsp;</div>'+
+    '<div class="row">'+
+      '<button class="btn ghost" id="edit">◀ Edit answers</button>'+
+      '<button class="btn navy" id="send">✅ Send to app</button>'+
+    '</div>';
+  document.getElementById('edit').onclick=function(){ idx=0; question(); };
+  document.getElementById('send').onclick=send;
+}
+
+function send(){
+  var btn=document.getElementById('send'); if(btn){ btn.disabled=true; btn.textContent='Sending…'; }
+  setStatus('speak','Sending to the app…');
+  var payload=JSON.stringify({ voice:true, mode:MODE, token:TOKEN, answers:answers });
+  // text/plain keeps this a "simple" request (no CORS preflight); no-cors so redirects are followed and doPost runs.
+  fetch(EXEC, { method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'}, body:payload })
+    .then(done).catch(done);
+  function done(){
+    setStatus('ok','✓ Sent. Return to the workforce app — the form is filling in now. You can close this tab.');
+    speak('Done. Your answers have been sent to the app.');
+    if(btn){ btn.textContent='Sent ✓'; }
+  }
+}
+
+/* ---------------- boot ---------------- */
+if(!TOKEN || !EXEC || !FIELDS.length){
+  card.innerHTML='<h1>Missing link details</h1><p class="sub">This page was opened without the needed information. Please start it from the interview form in the workforce app (the 🎤 Fill by voice button).</p>';
+} else {
+  intro();
+}
+</script>
+</body>
+</html>
